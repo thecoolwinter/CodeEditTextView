@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AppKit
 
 extension TextSelectionManager {
     /// Calculate a set of rects for a text selection suitable for highlighting the selection.
@@ -37,12 +38,13 @@ extension TextSelectionManager {
         }
 
         if firstLinePosition.yPos + firstLinePosition.height < lastLinePosition.yPos {
-            fillRects.append(CGRect(
+            let fillRect = CGRect(
                 x: rect.minX,
                 y: firstLinePosition.yPos + firstLinePosition.height,
                 width: rect.width,
                 height: lastLinePosition.yPos - (firstLinePosition.yPos + firstLinePosition.height)
-            ))
+            ).pixelAligned
+            fillRects.append(fillRect)
         }
 
         return fillRects
@@ -82,21 +84,74 @@ extension TextSelectionManager {
                     y: fragmentPosition.yPos + linePosition.yPos,
                     width: 0,
                     height: fragmentPosition.height
-                )
+                ).pixelAligned
             } else if let maxFragmentRect = layoutManager.rectForOffset(intersectionRange.max) {
                 maxRect = maxFragmentRect
             } else {
                 continue
             }
 
-            fillRects.append(CGRect(
+            let fillRect = CGRect(
                 x: minRect.origin.x,
                 y: minRect.origin.y,
                 width: maxRect.minX - minRect.minX,
                 height: max(minRect.height, maxRect.height)
-            ))
+            ).pixelAligned
+
+            fillRects.append(fillRect)
         }
 
         return fillRects
+    }
+    
+    /// Creates a drawable path for a text selection for drawing.
+    /// - Parameters:
+    ///   - rect: The available drawing space.
+    ///   - textSelection: The text selection to create the path for.
+    /// - Returns: An array of points going clockwise from the top-right corner of the shape. The last point and
+    ///            first point should have a line added between them to complete the shape.
+    func getSelectionDrawPath(in rect: NSRect, for textSelection: TextSelection) -> NSBezierPath {
+        var path: [CGPoint] = []
+
+        // Right-hand side of the text
+        var line = layoutManager?.textLineForOffset(textSelection.range.location)
+        while let lineUnwrapped = line {
+            for fragment in lineUnwrapped.data.lineFragments {
+                path.append(CGPoint(x: fragment.data.width, y: fragment.yPos + lineUnwrapped.yPos))
+                path.append(CGPoint(x: fragment.data.width, y: fragment.yPos + lineUnwrapped.yPos + fragment.height))
+            }
+
+            if let nextLine = layoutManager?.textLineForIndex(lineUnwrapped.index + 1), nextLine.yPos < rect.maxY {
+                line = nextLine
+            } else {
+                line = nil
+            }
+        }
+
+        // Go back up left side
+        while let lineUnwrapped = line {
+            for fragment in lineUnwrapped.data.lineFragments {
+                path.append(CGPoint(x: 0, y: fragment.yPos + lineUnwrapped.yPos + fragment.height))
+                path.append(CGPoint(x: 0, y: fragment.yPos + lineUnwrapped.yPos))
+            }
+
+            if let nextLine = layoutManager?.textLineForIndex(lineUnwrapped.index - 1), nextLine.yPos > rect.minY {
+                line = nextLine
+            } else {
+                line = nil
+            }
+        }
+
+        return makeRoundedPath(from: path)
+    }
+
+    private func makeRoundedPath(from points: [CGPoint]) -> NSBezierPath {
+        var path = NSBezierPath()
+        
+        for (idx, point) in points.dropLast().enumerated() {
+
+        }
+
+        return path
     }
 }

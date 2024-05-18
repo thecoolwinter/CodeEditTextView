@@ -328,7 +328,11 @@ public class TextSelectionManager: NSObject {
         let size = CGSize(width: max.maxX - min.x, height: max.maxY - min.y)
         textSelection.boundingRect = CGRect(origin: min, size: size)
 
-        context.fill(fillRects)
+        let radius: CGFloat = 10.0
+
+        let path = getSelectionDrawPath(in: rect, for: textSelection)
+        path.fill()
+
         context.restoreGState()
     }
 }
