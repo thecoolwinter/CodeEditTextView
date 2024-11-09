@@ -331,7 +331,8 @@ public class TextSelectionManager: NSObject {
         let radius: CGFloat = 10.0
 
         let path = getSelectionDrawPath(in: rect, for: textSelection)
-        path.fill()
+        context.setStrokeColor(NSColor.red.cgColor)
+        path.stroke()
 
         context.restoreGState()
     }

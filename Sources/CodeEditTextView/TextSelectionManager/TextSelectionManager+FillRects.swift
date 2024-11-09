@@ -111,47 +111,151 @@ extension TextSelectionManager {
     /// - Returns: An array of points going clockwise from the top-right corner of the shape. The last point and
     ///            first point should have a line added between them to complete the shape.
     func getSelectionDrawPath(in rect: NSRect, for textSelection: TextSelection) -> NSBezierPath {
-        var path: [CGPoint] = []
+        let points = makeSelectionPathPoints(in: rect, for: textSelection)
+        return makeRoundedPath(from: points, radius: 10)
+    }
+
+    private func makeSelectionPathPoints(in rect: NSRect, for textSelection: TextSelection) -> [NSPoint] {
+        var path: [NSPoint] = []
 
         // Right-hand side of the text
         var line = layoutManager?.textLineForOffset(textSelection.range.location)
-        while let lineUnwrapped = line {
-            for fragment in lineUnwrapped.data.lineFragments {
-                path.append(CGPoint(x: fragment.data.width, y: fragment.yPos + lineUnwrapped.yPos))
-                path.append(CGPoint(x: fragment.data.width, y: fragment.yPos + lineUnwrapped.yPos + fragment.height))
-            }
 
-            if let nextLine = layoutManager?.textLineForIndex(lineUnwrapped.index + 1), nextLine.yPos < rect.maxY {
-                line = nextLine
-            } else {
-                line = nil
-            }
+        // Top-left corner
+        if let line {
+            path.append(NSPoint(x: rect.minX, y: line.yPos).pixelAligned)
         }
 
-        // Go back up left side
         while let lineUnwrapped = line {
             for fragment in lineUnwrapped.data.lineFragments {
-                path.append(CGPoint(x: 0, y: fragment.yPos + lineUnwrapped.yPos + fragment.height))
-                path.append(CGPoint(x: 0, y: fragment.yPos + lineUnwrapped.yPos))
+                let topCorner = NSPoint(x: fragment.data.width, y: fragment.yPos + lineUnwrapped.yPos).pixelAligned
+                let bottomCorner = NSPoint(
+                    x: fragment.data.width,
+                    y: fragment.yPos + lineUnwrapped.yPos + fragment.height
+                ).pixelAligned
+                
+                path.append(topCorner)
+                path.append(bottomCorner)
             }
 
-            if let nextLine = layoutManager?.textLineForIndex(lineUnwrapped.index - 1), nextLine.yPos > rect.minY {
+            if let nextLine = layoutManager?.textLineForIndex(lineUnwrapped.index + 1),
+                textSelection.range.intersection(nextLine.range) != nil,
+                nextLine.yPos < rect.maxY {
                 line = nextLine
             } else {
+                // Bottom left corner, use the last line
+                if let line {
+                    path.append(NSPoint(x: rect.minX, y: line.yPos + line.height).pixelAligned)
+                }
                 line = nil
             }
-        }
-
-        return makeRoundedPath(from: path)
-    }
-
-    private func makeRoundedPath(from points: [CGPoint]) -> NSBezierPath {
-        var path = NSBezierPath()
-        
-        for (idx, point) in points.dropLast().enumerated() {
-
         }
 
         return path
+    }
+
+    private func makeRoundedPath(from points: [NSPoint], radius: CGFloat) -> NSBezierPath {
+        guard !points.isEmpty else { return NSBezierPath() }
+
+        let controlPointRadius = radius * 0.55
+
+        var path = NSBezierPath()
+
+        // Assumption: The first and last points are going to be on the same y-value.
+        // Control points are 55% of the way from the outer edge of the radius
+        // to the corner point.
+
+
+        for (idx, point) in points.dropLast().enumerated() {
+            let nextPoint = points[idx + 1]
+            let direction = pointDirection(point, nextPoint)
+
+            // Find destination around corner. If none, connect to first point.
+            let destination: NSPoint
+            if points.count > idx + 2 {
+                destination = points[idx + 2]
+            } else {
+                destination = points.first! // Safe, due to isEmpty check
+            }
+            let destinationDir = pointDirection(nextPoint, destination)
+
+            switch direction {
+            case .down:
+                path.move(to: NSPoint(x: point.x, y: point.y - radius))
+                path.line(to: NSPoint(x: point.x, y: nextPoint.y + radius))
+                let cpOne = NSPoint(x: point.x, y: nextPoint.y + controlPointRadius)
+                let cpTwo: NSPoint
+                let destinationCoord: NSPoint
+                if direction == .forward { // only need to handle horizontal cases
+                    cpTwo = NSPoint(x: nextPoint.x + controlPointRadius, y: nextPoint.y)
+                    destinationCoord = NSPoint(x: nextPoint.x + radius, y: nextPoint.y)
+                } else { // backward
+                    cpTwo = NSPoint(x: nextPoint.x - controlPointRadius, y: nextPoint.y)
+                    destinationCoord = NSPoint(x: nextPoint.x - radius, y: nextPoint.y)
+                }
+                path.curve(to: destinationCoord, controlPoint1: cpOne, controlPoint2: cpTwo)
+            case .up:
+                path.move(to: NSPoint(x: point.x, y: point.y + radius))
+                path.line(to: NSPoint(x: point.x, y: nextPoint.y - radius))
+                let cpOne = NSPoint(x: point.x, y: nextPoint.y - controlPointRadius)
+                let cpTwo: NSPoint
+                let destinationCoord: NSPoint
+                if direction == .forward { // only need to handle horizontal cases
+                    cpTwo = NSPoint(x: nextPoint.x + controlPointRadius, y: nextPoint.y)
+                    destinationCoord = NSPoint(x: nextPoint.x + radius, y: nextPoint.y)
+                } else { // backward
+                    cpTwo = NSPoint(x: nextPoint.x - controlPointRadius, y: nextPoint.y)
+                    destinationCoord = NSPoint(x: nextPoint.x - radius, y: nextPoint.y)
+                }
+                path.curve(to: destinationCoord, controlPoint1: cpOne, controlPoint2: cpTwo)
+            case .forward:
+                path.move(to: NSPoint(x: point.x + radius, y: point.y))
+                path.line(to: NSPoint(x: point.x - radius, y: nextPoint.y))
+                let cpOne = NSPoint(x: point.x - controlPointRadius, y: nextPoint.y)
+                let cpTwo: NSPoint
+                let destinationCoord: NSPoint
+                if direction == .up { // only need to handle vertical cases
+                    cpTwo = NSPoint(x: nextPoint.x, y: nextPoint.y + controlPointRadius)
+                    destinationCoord = NSPoint(x: nextPoint.x, y: nextPoint.y + radius)
+                } else { // down
+                    cpTwo = NSPoint(x: nextPoint.x, y: nextPoint.y - controlPointRadius)
+                    destinationCoord = NSPoint(x: nextPoint.x, y: nextPoint.y - radius)
+                }
+                path.curve(to: destinationCoord, controlPoint1: cpOne, controlPoint2: cpTwo)
+            case .backward:
+                path.move(to: NSPoint(x: point.x - radius, y: point.y))
+                path.line(to: NSPoint(x: point.x + radius, y: nextPoint.y))
+                let cpOne = NSPoint(x: point.x + controlPointRadius, y: nextPoint.y)
+                let cpTwo: NSPoint
+                let destinationCoord: NSPoint
+                if direction == .up { // only need to handle vertical cases
+                    cpTwo = NSPoint(x: nextPoint.x, y: nextPoint.y + controlPointRadius)
+                    destinationCoord = NSPoint(x: nextPoint.x, y: nextPoint.y + radius)
+                } else { // down
+                    cpTwo = NSPoint(x: nextPoint.x, y: nextPoint.y - controlPointRadius)
+                    destinationCoord = NSPoint(x: nextPoint.x, y: nextPoint.y - radius)
+                }
+                path.curve(to: destinationCoord, controlPoint1: cpOne, controlPoint2: cpTwo)
+            }
+        }
+
+        return path
+    }
+
+    private func pointDirection(_ from: NSPoint, _ toPoint: NSPoint) -> Direction {
+        if from.x == toPoint.x {
+            if from.y < toPoint.y {
+                return .down
+            } else {
+                return .up
+            }
+        } else {
+            if from.x < toPoint.x {
+                return .forward
+            } else {
+                return .backward
+            }
+        }
+
     }
 }
